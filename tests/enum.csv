@@ -1,0 +1,4 @@
+0,unit
+1,newtype:42
+2,tuple:true:"Hello, world!"
+4,struct:69:foo bar

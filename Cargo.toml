@@ -1,14 +1,17 @@
 [package]
-name = "serde_nom_csv"
+name = "serdenom_csv"
 version = "0.1.0"
+description = "Serde library for CSV (with nested structures) parsing with Nom"
 authors = ["Dragonink"]
-description = "Custom Serde library for CSV using Nom"
-repository = "https://github.com/Dragonink/serde_nom_csv"
+repository = "https://github.com/Dragonink/serdenom_csv"
 categories = ["parser-implementations"]
 keywords = ["serde", "nom", "csv"]
 edition = "2021"
-publish = false
 
 [dependencies]
 nom = "7"
 serde = "1"
+
+[dev-dependencies.serde]
+version = "1"
+features = ["serde_derive"]

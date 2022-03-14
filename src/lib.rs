@@ -1,6 +1,6 @@
-//! Serde library for CSV (with nested structures) parsing with Nom
+#![doc = include_str!("../README.md")]
 //!
-//! # Safety
+//! ## Safety
 //! The `forbid(unsafe_code)` lint is enforced at crate level.
 #![forbid(unsafe_code)]
 #![deny(unused_must_use)]

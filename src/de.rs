@@ -1,20 +1,24 @@
 //! Deserializing some CSV inputs
 //!
 //! # Deserialization methods
-//! `serdenom_csv` provides two methods for CSV deserialization:
+//! `serdenom_csv` provides these methods for CSV deserialization:
 //!
 //! | Return type | Default options function | Customizable options function |
 //! |---|---|---|
 //! | `Vec<Result<T>>` | [`from_str_each`] | [`DeserializerBuilder::deserialize_each`] |
 //! | `T` | [`from_str`] | [`DeserializerBuilder::deserialize`] |
+//! | `Stream<Result<T>>` | --- | [`DeserializerBuilder::deserialize_stream`] |
 //!
-//! **The difference between them is when they fail.**
+//! **The difference between the first two is when they fail.**
 //! The first method returns a `Vec<Result<T>>`, which allows it not to fail if an error occurs while deserializing some records.
 //! On the contrary, the second method returns only a `T`, and will fail if an error occurs anywhere.
 //!
+//! The third method is equivalent to the first one, except that it does not allocate deserialized records into a [`Vec`].
+//!
 //! ## Which method do I choose?
 //! If you have a standard CSV file with several records (which is very likely),
-//! you should use [`from_str_each`] or [`DeserializerBuilder::deserialize_each`].
+//! you should use [`from_str_each`] or [`DeserializerBuilder::deserialize_each`],
+//! or [`DeserializerBuilder::deserialize_stream`] if you do not want a newly-allocted [`Vec`].
 //! If you have a non-standard CSV file with a single structure or a list of values,
 //! you need [`from_str`] or [`DeserializerBuilder::deserialize`].
 //!
@@ -106,7 +110,7 @@
 //! 	text: String,
 //! }
 //! ```
-//! ... you can deserialize this:
+//! ... you may deserialize this:
 //! ```rust
 //! struct T<'s> {
 //! 	text: &'s str,
@@ -145,15 +149,14 @@
 //! ```
 
 use crate::error::DeErrorKind;
+#[cfg(feature = "stream")]
+use futures::stream::Stream;
 use nom::{branch::Alt, IResult};
 use serde::{
 	de::{self, DeserializeSeed, MapAccess, SeqAccess, VariantAccess, Visitor},
 	forward_to_deserialize_any, serde_if_integer128, Deserialize,
 };
 use std::{collections::HashSet, fmt::Debug, ops::Neg, str::FromStr};
-
-type NomError<'de> = nom::error::Error<&'de str>;
-type NomErr<'de> = nom::Err<NomError<'de>>;
 
 /// Deserialize a CSV input using the default deserializer
 ///
@@ -182,6 +185,9 @@ pub fn from_str_each<'de, T: Deserialize<'de>>(
 ) -> crate::Result<Vec<crate::Result<T>>> {
 	DeserializerBuilder::default().deserialize_each(input)
 }
+
+type NomError<'de> = nom::error::Error<&'de str>;
+type NomErr<'de> = nom::Err<NomError<'de>>;
 
 /// Define a level of nested types in CSV data
 ///
@@ -344,13 +350,15 @@ builder_param!(
 	/// ```
 	///
 	/// # Deserializing
-	/// This builder provides two functions to finally deserialize some data:
+	/// This builder provides these functions to finally deserialize some data:
 	/// - [`deserialize`](Self::deserialize) can deserialize any `T`;
 	///   but will fail should an error occur anywhre during the process.
 	/// - [`deserialize_each`](Self::deserialize_each) can deserialize only record sequences;
 	///   but will succeed should some errors occur while deserializing some records.
+	/// - [`deserialize_stream`](Self::deserialize_stream) is equivalent to [`deserialize_each`](Self::deserialize_each);
+	///   but yields deserialized records one by one in a stream.
 	///
-	/// For more details on the two methods, please see the [module documentation](self#deserialization-methods).
+	/// For more details on these methods, please see the [module documentation](self#deserialization-methods).
 	#[derive(Debug, Clone)]
 	DeserializerBuilder,
 	/// Define the diferent levels of nested structures in the CSV data
@@ -420,6 +428,7 @@ impl DeserializerBuilder {
 	/// # See also
 	/// - If you use the default options, you should use [`from_str`] instead.
 	/// - If you want to deserialize a sequence of standard CSV records, you should use [`deserialize_each`](Self::deserialize_each) instead.
+	/// - If you want to deserialize each record in a stream, you should use [`deserialize_stream`](Self::deserialize_stream) instead.
 	pub fn deserialize<'de, T: Deserialize<'de>>(&self, mut input: &'de str) -> crate::Result<T> {
 		assert!(!self.separators.is_empty(), "separators must not be empty");
 		assert!(
@@ -451,6 +460,7 @@ impl DeserializerBuilder {
 	/// # See also
 	/// - If you use the default options, you should use [`from_str_each`] instead.
 	/// - If you want to deserialize some non-standard CSV structure, you should use [`deserialize`](Self::deserialize) instead.
+	/// - If you want to deserialize each record in a stream, you should use [`deserialize_stream`](Self::deserialize_stream) instead.
 	pub fn deserialize_each<'de, T: Deserialize<'de>>(
 		&self,
 		mut input: &'de str,
@@ -473,8 +483,8 @@ impl DeserializerBuilder {
 		)(input.trim())
 		.unwrap();
 		Ok(records
-			.iter()
-			.filter(|record| !record.trim().is_empty())
+			.into_iter()
+			.filter(|&record| !record.trim().is_empty())
 			.map(|input| {
 				let mut deserializer = Deserializer::new(
 					input,
@@ -485,6 +495,93 @@ impl DeserializerBuilder {
 				T::deserialize(&mut deserializer)
 			})
 			.collect())
+	}
+
+	/// Deserialize each record of a CSV input independently in a stream
+	///
+	/// > 🛈 Requires feature *`stream`*
+	///
+	/// This function returns a [`Stream`](https://docs.rs/futures/latest/futures/stream/trait.Stream.html)`<Result<T>>` such that if the deserializations of some records fail,
+	/// the others will still be deserialized successfully.
+	///
+	/// This function does not allocate the results inside a [`Vec`],
+	/// so you may use it instead of [`deserialize_each`](Self::deserialize_each) where you can run asynchronous operations.
+	///
+	/// # Example
+	/// ```rust
+	/// # use futures::stream::StreamExt;
+	/// # use serdenom_csv::de::DeserializerBuilder;
+	/// # #[derive(serde::Deserialize)] struct Data { id: usize, value: usize }
+	/// # const INPUT: &str = "id,usize";
+	/// let deserializer = DeserializerBuilder::default();
+	/// # async {
+	/// let data: Vec<Data> = deserializer.deserialize_stream(INPUT)
+	/// 	.unwrap()
+	/// 	.inspect(|res| {
+	/// 		if let Err(err) = res {
+	/// 			eprintln!("{err}");
+	/// 		}
+	/// 	})
+	/// 	.filter_map(|res| async { res.ok() })
+	/// 	.collect()
+	/// 	.await;
+	/// # };
+	/// ```
+	///
+	/// # Panics
+	/// This function panics if the [`separators`](Self::separators) list is empty,
+	/// or if they are not unique.
+	///
+	/// # See also
+	/// - If you want to deserialize to a `Vec<Result<T>>`, you should use [`deserialize_each`](Self::deserialize_each) instead.
+	/// - If you want to deserialize some non-standard CSV structure, you should use [`deserialize`](Self::deserialize) instead.
+	#[cfg(feature = "stream")]
+	pub fn deserialize_stream<'de, 's: 'de, T: Deserialize<'de>>(
+		&'s self,
+		mut input: &'de str,
+	) -> crate::Result<impl Stream<Item = crate::Result<T>> + 'de> {
+		assert!(!self.separators.is_empty(), "separators must not be empty");
+		assert!(
+			Separators::are_unique(self.separators.iter()),
+			"separators must be unique"
+		);
+		let headers = self.extract_headers(input)?.map(|(tail, headers)| {
+			input = tail;
+			headers
+		});
+		let sep = self.separators[0].record();
+		Ok(futures::stream::poll_fn(move |_| {
+			use futures::task::Poll;
+			use nom::{
+				bytes::complete::take_till1,
+				character::complete::anychar,
+				combinator::{eof, opt},
+			};
+
+			macro_rules! take_sep {
+				($tail:expr) => {
+					opt::<_, _, NomError<'de>, _>(anychar)($tail).unwrap().0
+				};
+			}
+			loop {
+				if eof::<_, NomError<'de>>(input).is_ok() {
+					return Poll::Ready(None);
+				} else if let Ok((tail, res)) =
+					take_till1::<_, _, NomError<'de>>(|c| c == sep)(input)
+				{
+					input = take_sep!(tail);
+					let mut deserializer = Deserializer::new(
+						res,
+						headers.as_deref(),
+						&self.separators,
+						self.string_delim,
+					);
+					return Poll::Ready(Some(T::deserialize(&mut deserializer)));
+				} else {
+					input = take_sep!(input);
+				}
+			}
+		}))
 	}
 }
 

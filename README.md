@@ -8,6 +8,7 @@ So I just took the opportunity to program a whole Serde library with the help of
 - [**Supports all types**](de#supported-types) (including structs, enums and sequence-like types)
 - [Supports borrowed strings](de#borrowed-types)
 - Customizable deserializer using [`DeserializerBuilder`](de::DeserializerBuilder)
+- Deserialize each CSV record in a stream using [`deserialize_stream`](de::DeserializerBuilder::deserialize_stream)
 
 ### Example
 This CSV with a list of phone numbers:

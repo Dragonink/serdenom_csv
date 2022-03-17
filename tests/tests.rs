@@ -19,12 +19,18 @@ fn primitives() {
 
 	let data: Vec<S> = from_str(DATASET).unwrap();
 	assert_eq!(data.len(), 2);
-	let other_data: Vec<S> = from_str_each(DATASET)
+	let each_data: Vec<S> = from_str_each(DATASET)
 		.unwrap()
 		.into_iter()
 		.map(|res| res.unwrap())
 		.collect();
-	assert_eq!(data, other_data);
+	assert_eq!(each_data, data);
+	let deserializer = DeserializerBuilder::default();
+	let stream_data: Vec<S> =
+		futures::executor::block_on_stream(deserializer.deserialize_stream(DATASET).unwrap())
+			.map(|res| res.unwrap())
+			.collect();
+	assert_eq!(stream_data, data);
 
 	assert_eq!(
 		data[0],
@@ -71,13 +77,18 @@ fn inner_struct() {
 
 	let data: Vec<S> = deserializer.deserialize(DATASET).unwrap();
 	assert_eq!(data.len(), 3);
-	let other_data: Vec<S> = deserializer
+	let each_data: Vec<S> = deserializer
 		.deserialize_each(DATASET)
 		.unwrap()
 		.into_iter()
 		.map(|res| res.unwrap())
 		.collect();
-	assert_eq!(data, other_data);
+	assert_eq!(each_data, data);
+	let stream_data: Vec<S> =
+		futures::executor::block_on_stream(deserializer.deserialize_stream(DATASET).unwrap())
+			.map(|res| res.unwrap())
+			.collect();
+	assert_eq!(stream_data, data);
 
 	assert_eq!(
 		data[0],
@@ -112,13 +123,18 @@ fn tuple() {
 
 	let data: Vec<T> = deserializer.deserialize(DATASET).unwrap();
 	assert_eq!(data.len(), 3);
-	let other_data: Vec<T> = deserializer
+	let each_data: Vec<T> = deserializer
 		.deserialize_each(DATASET)
 		.unwrap()
 		.into_iter()
 		.map(|res| res.unwrap())
 		.collect();
-	assert_eq!(data, other_data);
+	assert_eq!(each_data, data);
+	let stream_data: Vec<T> =
+		futures::executor::block_on_stream(deserializer.deserialize_stream(DATASET).unwrap())
+			.map(|res| res.unwrap())
+			.collect();
+	assert_eq!(stream_data, data);
 
 	assert_eq!(data[0], T(0, "Hello, world!", Some(true)));
 	assert_eq!(data[1], T(42, "foo bar", None));
@@ -149,13 +165,18 @@ fn r#enum() {
 
 	let data: Vec<S> = deserializer.deserialize(DATASET).unwrap();
 	assert_eq!(data.len(), 4);
-	let other_data: Vec<S> = deserializer
+	let each_data: Vec<S> = deserializer
 		.deserialize_each(DATASET)
 		.unwrap()
 		.into_iter()
 		.map(|res| res.unwrap())
 		.collect();
-	assert_eq!(data, other_data);
+	assert_eq!(each_data, data);
+	let stream_data: Vec<S> =
+		futures::executor::block_on_stream(deserializer.deserialize_stream(DATASET).unwrap())
+			.map(|res| res.unwrap())
+			.collect();
+	assert_eq!(stream_data, data);
 
 	assert_eq!(
 		data[0],

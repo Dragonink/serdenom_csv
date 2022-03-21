@@ -1,6 +1,6 @@
 [package]
 name = "serdenom_csv"
-version = "0.2.0"
+version = "0.2.1"
 description = "Serde library for CSV (with nested structures) parsing with Nom"
 authors = ["Dragonink"]
 repository = "https://github.com/Dragonink/serdenom_csv"
@@ -15,9 +15,9 @@ stream = ["futures"]
 nom = "7"
 serde = "1"
 [dependencies.futures]
-version = "0"
 optional = true
-features = []
+version = "0"
+default-features = false
 
 [dev-dependencies.futures]
 version = "0"

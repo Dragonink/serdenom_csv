@@ -166,7 +166,7 @@ use std::{collections::HashSet, fmt::Debug, ops::Neg, str::FromStr};
 /// # See also
 /// - If you want to customize the deserializer's options, you need [`DeserializerBuilder::deserialize`] instead.
 /// - If you want to deserialize a sequence of standard CSV records, you should use [`from_str_each`] instead.
-#[inline]
+#[inline(always)]
 pub fn from_str<'de, T: Deserialize<'de>>(input: &'de str) -> crate::Result<T> {
 	DeserializerBuilder::default().deserialize(input)
 }
@@ -179,7 +179,7 @@ pub fn from_str<'de, T: Deserialize<'de>>(input: &'de str) -> crate::Result<T> {
 /// # See also
 /// - If you want to customize the deserializer's options, you need [`DeserializerBuilder::deserialize_each`] instead.
 /// - If you want to deserialize some non-standard CSV structure, you should use [`from_str`] instead.
-#[inline]
+#[inline(always)]
 pub fn from_str_each<'de, T: Deserialize<'de>>(
 	input: &'de str,
 ) -> crate::Result<Vec<crate::Result<T>>> {
@@ -261,7 +261,7 @@ impl Separators {
 	}
 }
 impl PartialEq<Separators> for char {
-	#[inline]
+	#[inline(always)]
 	fn eq(&self, sep: &Separators) -> bool {
 		sep.field().eq(self) || sep.record().eq(self)
 	}
@@ -377,7 +377,7 @@ builder_param!(
 	has_headers: bool
 );
 impl Default for DeserializerBuilder {
-	#[inline]
+	#[inline(always)]
 	fn default() -> Self {
 		Self {
 			separators: vec![Separators::default()],
@@ -485,13 +485,15 @@ impl DeserializerBuilder {
 		Ok(records
 			.into_iter()
 			.filter(|&record| !record.trim().is_empty())
-			.map(|input| {
+			.enumerate()
+			.map(|(i, input)| {
 				let mut deserializer = Deserializer::new(
 					input,
 					headers.as_deref(),
 					&self.separators,
 					self.string_delim,
 				);
+				deserializer.curr_record = i;
 				T::deserialize(&mut deserializer)
 			})
 			.collect())
@@ -550,6 +552,7 @@ impl DeserializerBuilder {
 			headers
 		});
 		let sep = self.separators[0].record();
+		let mut i = 0;
 		Ok(futures::stream::poll_fn(move |_| {
 			use futures::task::Poll;
 			use nom::{
@@ -576,6 +579,8 @@ impl DeserializerBuilder {
 						&self.separators,
 						self.string_delim,
 					);
+					deserializer.curr_record = i;
+					i += 1;
 					return Poll::Ready(Some(T::deserialize(&mut deserializer)));
 				} else {
 					input = take_sep!(input);
@@ -589,6 +594,7 @@ impl DeserializerBuilder {
 struct Deserializer<'b, 'de> {
 	input: &'de str,
 	headers: Option<&'b [&'de str]>,
+	initial_headers: Option<&'b [&'de str]>,
 	separators: &'b [Separators],
 	curr_separator: usize,
 	curr_record: usize,
@@ -606,6 +612,7 @@ impl<'b, 'de> Deserializer<'b, 'de> {
 		Self {
 			input,
 			headers,
+			initial_headers: headers,
 			separators,
 			curr_separator: 0,
 			curr_record: 0,
@@ -625,11 +632,14 @@ impl<'b, 'de> Deserializer<'b, 'de> {
 	}
 
 	#[inline(always)]
-	const fn new_error(&self, kind: DeErrorKind) -> crate::Error {
+	fn new_error(&self, kind: DeErrorKind) -> crate::Error {
 		crate::Error::De {
 			kind,
-			record: Some(self.curr_record),
-			field: Some(self.curr_field),
+			record: Some(self.curr_record + 1),
+			field: self
+				.initial_headers
+				.map(|headers| format!("{:?}", headers[self.curr_field]))
+				.or_else(|| Some(format!("{:?}", self.curr_field + 1))),
 		}
 	}
 
@@ -1188,11 +1198,23 @@ impl<'s, 'b, 'de> de::Deserializer<'de> for &'s mut Deserializer<'b, 'de> {
 }
 
 #[derive(Debug)]
-struct HeaderDeserializer<'b, H> {
+struct HeaderDeserializer<'r, 'b, 'de, H> {
+	deserializer: &'r mut Deserializer<'b, 'de>,
 	headers: &'b [H],
 	index: usize,
 }
-impl<'s, 'b, 'de> de::Deserializer<'de> for &'s mut HeaderDeserializer<'b, &'b str> {
+impl<'r, 'b, 'de, H> HeaderDeserializer<'r, 'b, 'de, H> {
+	#[inline]
+	fn get_header(&self) -> crate::Result<&H> {
+		self.headers.get(self.index).ok_or_else(|| {
+			self.deserializer.new_error(DeErrorKind::StructureError(
+				self.index + 1,
+				Some(self.headers.len()),
+			))
+		})
+	}
+}
+impl<'s, 'r, 'b, 'de> de::Deserializer<'de> for &'s mut HeaderDeserializer<'r, 'b, 'de, &'b str> {
 	type Error = crate::Error;
 
 	#[inline]
@@ -1200,7 +1222,7 @@ impl<'s, 'b, 'de> de::Deserializer<'de> for &'s mut HeaderDeserializer<'b, &'b s
 	where
 		V: Visitor<'de>,
 	{
-		visitor.visit_str(self.headers[self.index])
+		self.get_header().and_then(|&val| visitor.visit_str(val))
 	}
 
 	forward_to_deserialize_any! {
@@ -1209,7 +1231,7 @@ impl<'s, 'b, 'de> de::Deserializer<'de> for &'s mut HeaderDeserializer<'b, &'b s
 		option unit_struct newtype_struct map struct enum seq tuple tuple_struct bytes byte_buf
 	}
 }
-impl<'s, 'b, 'de> de::Deserializer<'de> for &'s mut HeaderDeserializer<'b, usize> {
+impl<'s, 'r, 'b, 'de> de::Deserializer<'de> for &'s mut HeaderDeserializer<'r, 'b, 'de, usize> {
 	type Error = crate::Error;
 
 	#[cfg(target_pointer_width = "16")]
@@ -1218,7 +1240,8 @@ impl<'s, 'b, 'de> de::Deserializer<'de> for &'s mut HeaderDeserializer<'b, usize
 	where
 		V: Visitor<'de>,
 	{
-		visitor.visit_u16(self.headers[self.index] as u16)
+		self.get_header()
+			.and_then(|&val| visitor.visit_u16(val as u16))
 	}
 
 	#[cfg(target_pointer_width = "32")]
@@ -1227,7 +1250,8 @@ impl<'s, 'b, 'de> de::Deserializer<'de> for &'s mut HeaderDeserializer<'b, usize
 	where
 		V: Visitor<'de>,
 	{
-		visitor.visit_u32(self.headers[self.index] as u32)
+		self.get_header()
+			.and_then(|&val| visitor.visit_u32(val as u32))
 	}
 
 	#[cfg(target_pointer_width = "64")]
@@ -1236,7 +1260,8 @@ impl<'s, 'b, 'de> de::Deserializer<'de> for &'s mut HeaderDeserializer<'b, usize
 	where
 		V: Visitor<'de>,
 	{
-		visitor.visit_u64(self.headers[self.index] as u64)
+		self.get_header()
+			.and_then(|&val| visitor.visit_u64(val as u64))
 	}
 
 	forward_to_deserialize_any! {
@@ -1314,12 +1339,13 @@ impl<'r, 'b, 'de> SeqAccess<'de> for StructAccess<'r, 'b, 'de> {
 			empty_record = self.deserializer.nom_empty_record();
 			empty_counter += 1;
 		}
+		let res = seed.deserialize(&mut *self.deserializer).map(Some);
 		self.counter += 1;
 		if self.deserializer.curr_separator == 0 {
 			self.deserializer.curr_field = 0;
 			self.deserializer.curr_record += 1;
 		}
-		seed.deserialize(&mut *self.deserializer).map(Some)
+		res
 	}
 }
 impl<'r, 'b, 'de> MapAccess<'de> for StructAccess<'r, 'b, 'de> {
@@ -1336,6 +1362,7 @@ impl<'r, 'b, 'de> MapAccess<'de> for StructAccess<'r, 'b, 'de> {
 			.ok_or_else(|| self.deserializer.new_error(DeErrorKind::NeedHeaders))
 			.and_then(|headers| {
 				let mut header_deserializer = HeaderDeserializer {
+					deserializer: self.deserializer,
 					headers,
 					index: self.counter,
 				};
@@ -1350,17 +1377,17 @@ impl<'r, 'b, 'de> MapAccess<'de> for StructAccess<'r, 'b, 'de> {
 		if self.counter > 0 {
 			take_end_of_field!(self.deserializer);
 		}
+		self.deserializer.curr_separator += 1;
+		let res = seed.deserialize(&mut *self.deserializer);
+		self.deserializer.curr_separator -= 1;
 		self.counter += 1;
 		if !self.deserializer.is_inner() {
 			self.deserializer.curr_field += 1;
 		}
-		self.deserializer.curr_separator += 1;
-		let res = seed.deserialize(&mut *self.deserializer);
-		self.deserializer.curr_separator -= 1;
 		res
 	}
 
-	#[inline]
+	#[inline(always)]
 	fn size_hint(&self) -> Option<usize> {
 		Some(self.deserializer.headers?.len() - self.counter)
 	}
@@ -1372,7 +1399,7 @@ struct TupleAccess<'r, 'b, 'de> {
 	len: usize,
 }
 impl<'r, 'b, 'de> TupleAccess<'r, 'b, 'de> {
-	#[inline]
+	#[inline(always)]
 	fn new(deserializer: &'r mut Deserializer<'b, 'de>, len: usize) -> Self {
 		Self {
 			access: StructAccess::from(deserializer),
@@ -1391,7 +1418,7 @@ impl<'r, 'b, 'de> SeqAccess<'de> for TupleAccess<'r, 'b, 'de> {
 		self.access.next_value_seed(seed).map(Some)
 	}
 
-	#[inline]
+	#[inline(always)]
 	fn size_hint(&self) -> Option<usize> {
 		Some(self.len - self.access.counter)
 	}

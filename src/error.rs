@@ -54,7 +54,7 @@ pub enum Error {
 		/// Record where the error occurred
 		record: Option<usize>,
 		/// Field where the error occured
-		field: Option<usize>,
+		field: Option<String>,
 	},
 }
 impl From<DeErrorKind> for Error {
@@ -80,8 +80,9 @@ impl Display for Error {
 				"{kind}{}",
 				record
 					.map(|val| format!(
-						" (at record {val}{})",
+						" (at record #{val}{})",
 						field
+							.as_ref()
 							.map(|val| format!(", field {val}"))
 							.unwrap_or_default()
 					))

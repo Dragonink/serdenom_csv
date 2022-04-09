@@ -28,12 +28,12 @@
 //! # #[derive(Debug, PartialEq, Eq, serde::Deserialize)] struct T { value: usize }
 //! # const INPUT: &str = "value";
 //! let data: Vec<T> = from_str(INPUT).unwrap();
-//!	let data_each: Vec<T> = from_str_each(INPUT)
-//!		.unwrap()
-//!		.into_iter()
-//!		.map(|res| res.unwrap())
-//!		.collect();
-//!	assert_eq!(data, data_each);
+//! let data_each: Vec<T> = from_str_each(INPUT)
+//!     .unwrap()
+//!     .into_iter()
+//!     .map(|res| res.unwrap())
+//!     .collect();
+//! assert_eq!(data, data_each);
 //! ```
 //!
 //! # Supported types
@@ -53,14 +53,14 @@
 //! # use serde::Deserialize;
 //! #[derive(Deserialize)]
 //! struct Nested<'s> {
-//! 	value: usize,
-//! 	text: &'s str,
+//!     value: usize,
+//!     text: &'s str,
 //! }
 //! #[derive(Deserialize)]
 //! struct Data<'s> {
-//! 	id: usize,
-//! 	#[serde(borrow)]
-//! 	nested: Vec<Nested<'s>>,
+//!     id: usize,
+//!     #[serde(borrow)]
+//!     nested: Vec<Nested<'s>>,
 //! }
 //! ```
 //! ... you may write your CSV like this:
@@ -75,17 +75,17 @@
 //! # #[derive(Debug, PartialEq, Eq, serde::Deserialize)] struct Data<'s> { id: usize, #[serde(borrow)] nested: Vec<Nested<'s>> }
 //! # const INPUT: &str = "id,nested\n0,86413:foo bar;6846:hello there";
 //! let deserializer = DeserializerBuilder::default()
-//! 	.separators([Separators::default(), Separators(';', ':')]);
+//!     .separators([Separators::default(), Separators(';', ':')]);
 //! let data: Vec<Data> = deserializer.deserialize(INPUT).unwrap();
 //!
 //! assert_eq!(data[0].id, 0);
 //! assert_eq!(data[0].nested[0], Nested {
-//! 	value: 86413,
-//! 	text: "foo bar",
+//!     value: 86413,
+//!     text: "foo bar",
 //! });
 //! assert_eq!(data[0].nested[1], Nested {
-//! 	value: 6846,
-//! 	text: "hello there",
+//!     value: 6846,
+//!     text: "hello there",
 //! });
 //! ```
 //!
@@ -107,13 +107,13 @@
 //! So, instead of deserializing this:
 //! ```rust
 //! struct T {
-//! 	text: String,
+//!     text: String,
 //! }
 //! ```
 //! ... you may deserialize this:
 //! ```rust
 //! struct T<'s> {
-//! 	text: &'s str,
+//!     text: &'s str,
 //! }
 //! ```
 //!
@@ -136,15 +136,15 @@
 //! #[derive(Debug, PartialEq, Eq, Deserialize)]
 //! #[serde(rename_all = "lowercase")]
 //! enum E<'s> {
-//! 	Unit,
-//! 	NewType(usize),
-//! 	Tuple(bool, &'s str),
-//! 	Struct { num: usize, text: &'s str },
+//!     Unit,
+//!     NewType(usize),
+//!     Tuple(bool, &'s str),
+//!     Struct { num: usize, text: &'s str },
 //! }
 //!
 //! # const INPUT: &str = "unit\nnewtype,42\ntuple,true,\"Hello, world!\"\nstruct,69,foo bar";
 //! let deserializer = DeserializerBuilder::default()
-//! 	.has_headers(false);
+//!     .has_headers(false);
 //! let data: Vec<E> = deserializer.deserialize(INPUT).unwrap();
 //! ```
 
@@ -195,9 +195,9 @@ type NomErr<'de> = nom::Err<NomError<'de>>;
 /// Let us say that you have this struct:
 /// ```rust
 /// struct T<'s> {
-/// 	id: usize,
-/// 	firstname: &'s str,
-/// 	lastname: &'s str,
+///     id: usize,
+///     firstname: &'s str,
+///     lastname: &'s str,
 /// }
 /// ```
 ///
@@ -214,9 +214,9 @@ type NomErr<'de> = nom::Err<NomError<'de>>;
 ///   ```
 /// - `Separators('\n', '\t')`
 ///   ```csv
-///   id	firstname	lastname
-///   865	Jean	Dupont
-///   785421	John	Doe
+///   id    firstname    lastname
+///   865    Jean    Dupont
+///   785421    John    Doe
 ///   ```
 #[derive(Debug, Clone, Copy)]
 pub struct Separators(
@@ -367,7 +367,7 @@ builder_param!(
 	separators: Vec<Separators>,
 	/// Character delimiting string
 	///
-	/// **Default value: `"`**
+	/// **Default value: `'"'`**
 	string_delim: char,
 	/// If the first record of the CSV input is a header row
 	///
@@ -518,15 +518,15 @@ impl DeserializerBuilder {
 	/// let deserializer = DeserializerBuilder::default();
 	/// # async {
 	/// let data: Vec<Data> = deserializer.deserialize_stream(INPUT)
-	/// 	.unwrap()
-	/// 	.inspect(|res| {
-	/// 		if let Err(err) = res {
-	/// 			eprintln!("{err}");
-	/// 		}
-	/// 	})
-	/// 	.filter_map(|res| async { res.ok() })
-	/// 	.collect()
-	/// 	.await;
+	///     .unwrap()
+	///     .inspect(|res| {
+	///         if let Err(err) = res {
+	///             eprintln!("{err}");
+	///         }
+	///     })
+	///     .filter_map(|res| async { res.ok() })
+	///     .collect()
+	///     .await;
 	/// # };
 	/// ```
 	///

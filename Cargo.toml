@@ -9,7 +9,7 @@ keywords = ["serde", "nom", "csv"]
 edition = "2021"
 
 [features]
-stream = ["futures"]
+stream = ["dep:futures"]
 
 [dependencies]
 nom = "7"

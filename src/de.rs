@@ -10,8 +10,8 @@
 //! | `Stream<Result<T>>` | --- | [`DeserializerBuilder::deserialize_stream`] |
 //!
 //! **The difference between the first two is when they fail.**
-//! The first method returns a `Vec<Result<T>>`, which allows it not to fail if an error occurs while deserializing some records.
-//! On the contrary, the second method returns only a `T`, and will fail if an error occurs anywhere.
+//! The first method returns a `Vec<Result<T>>`, which allows it not to fail if an error occured while deserializing some records.
+//! On the contrary, the second method returns only a `T`, and will fail even if an error occured somewhere.
 //!
 //! The third method is equivalent to the first one, except that it does not allocate deserialized records into a [`Vec`].
 //!
@@ -22,7 +22,7 @@
 //! If you have a non-standard CSV file with a single structure or a list of values,
 //! you need [`from_str`] or [`DeserializerBuilder::deserialize`].
 //!
-//! With that said, you may still use the second method instead of the first one if you do not care or want a fail-fast method:
+//! With that said, you may still use the second method instead of the first one if you do not care nor want a fail-fast method:
 //! ```rust
 //! # use serdenom_csv::*;
 //! # #[derive(Debug, PartialEq, Eq, serde::Deserialize)] struct T { value: usize }
@@ -39,6 +39,12 @@
 //! # Supported types
 //! `serdenom_csv`'s deserializer **implements all [`serde::de::Deserializer`] methods**.
 //! Which means that all types (including structs, [enums](self#Enums) and sequence-like types) are supported and can be nested.
+//!
+//! > ⚠ `serdenom_csv`'s [`deserialize_any`](serde::de::Deserializer::deserialize_any) method can only deserialize "primitive" types, which include:
+//! > [`()`](unit), [`char`], [`bool`], [`u8`] through [`u64`], [`i8`] through [`i64`], [`f32`] through [`f64`], and [`str`].
+//! > This means that structs, enums and sequence-like types **cannot** be deserialized with this method (for example, [`either`'s untagged modules](https://docs.rs/either/latest/either/serde_untagged/index.html)).
+//!
+//! > ⚠ `serdenom_csv`'s [`deserialize_ignored_any`](serde::de::Deserializer::deserialize_ignored_any) method will always deserialize a [`str`].
 //!
 //! ## Nested types
 //! CSV standard format does not allow nested types.
@@ -100,8 +106,8 @@
 //! ## Borrowed types
 //! As you may have seen in some examples, `serdenom_csv` supports borrowed strings.
 //!
-//! Currently, **`serdenom_csv` does not support borrowed bytes**.
-//! This means that you need to type your bytes as `Vec<u8>` and represent them as a list of numbers in CSV.
+//! > ⚠ Currently, `serdenom_csv` **does not support borrowed bytes**.
+//! > This means that you need to type your bytes as `Vec<u8>` and represent them as a list of numbers in CSV.
 //!
 //! Borrowed types allow you to borrow data from the deserializer by using zero-copy deserialization.
 //! So, instead of deserializing this:
@@ -161,7 +167,7 @@ use std::{collections::HashSet, fmt::Debug, ops::Neg, str::FromStr};
 /// Deserialize a CSV input using the default deserializer
 ///
 /// This function returns a generic `T` such that it can deserialize anything.
-/// This means that this function will fail if an error occur anywhere during the process.
+/// This means that this function will fail if an error occured somewhere during the process.
 ///
 /// # See also
 /// - If you want to customize the deserializer's options, you need [`DeserializerBuilder::deserialize`] instead.
@@ -173,7 +179,7 @@ pub fn from_str<'de, T: Deserialize<'de>>(input: &'de str) -> crate::Result<T> {
 
 /// Deserialize each record of a CSV input independently using the default deserializer
 ///
-/// This function returns a `Vec<Result<T>>` such that if the deserializations of some records fail,
+/// This function returns a `Vec<Result<T>>` such that even if the deserializations of some records failed,
 /// the others will still be deserialized successfully.
 ///
 /// # See also
@@ -223,12 +229,12 @@ pub struct Separators(
 	/// Record separator
 	///
 	/// It separates the elements of a sequence.
-	/// (Default value: `\n`)
+	/// ([Default](Self::default) value: `\n`)
 	pub char,
 	/// Field separator
 	///
 	/// It separates the fields of a structure.
-	/// (Default value: `,`)
+	/// ([Default](Self::default) value: `,`)
 	pub char,
 );
 impl Default for Separators {
@@ -419,7 +425,7 @@ impl DeserializerBuilder {
 	/// Deserialize a CSV input
 	///
 	/// This function returns a generic `T` such that it can deserialize anything.
-	/// This means that this function will fail if an error occur anywhere during the process.
+	/// This means that this function will fail if an error occured somewhere during the process.
 	///
 	/// # Panics
 	/// This function panics if the [`separators`](Self::separators) list is empty,
@@ -450,7 +456,7 @@ impl DeserializerBuilder {
 
 	/// Deserialize each record of a CSV input independently
 	///
-	/// This function returns a `Vec<Result<T>>` such that if the deserializations of some records fail,
+	/// This function returns a `Vec<Result<T>>` such that even if the deserializations of some records failed,
 	/// the others will still be deserialized successfully.
 	///
 	/// # Panics
@@ -740,6 +746,9 @@ impl<'b, 'de> Deserializer<'b, 'de> {
 		}
 	}
 
+	const TRUE: &'static str = stringify!(true);
+	const FALSE: &'static str = stringify!(false);
+
 	#[inline]
 	fn parse_u<N: FromStr>(&mut self) -> Result<N, NomErr<'de>>
 	where
@@ -783,8 +792,40 @@ impl<'s, 'b, 'de> de::Deserializer<'de> for &'s mut Deserializer<'b, 'de> {
 	where
 		V: Visitor<'de>,
 	{
-		//TODO auto type recognition
-		self.deserialize_str(visitor)
+		use nom::{
+			branch::alt,
+			bytes::complete::tag_no_case,
+			character::complete::{anychar, char, digit1},
+			combinator::{opt, verify},
+			number::complete::double,
+			sequence::pair,
+		};
+
+		if self.peek_end_of_field() {
+			visitor.visit_unit()
+		} else if pair::<_, _, _, NomError<'de>, _, _>(
+			anychar,
+			verify(anychar, |c| self.is_end_of_field(*c)),
+		)(self.input)
+		.is_ok()
+		{
+			self.deserialize_char(visitor)
+		} else if alt::<_, _, NomError<'de>, _>((
+			tag_no_case(Deserializer::TRUE),
+			tag_no_case(Deserializer::FALSE),
+		))(self.input)
+		.is_ok()
+		{
+			self.deserialize_bool(visitor)
+		} else if digit1::<_, NomError<'de>>(self.input).is_ok() {
+			self.deserialize_u64(visitor)
+		} else if pair::<_, _, _, NomError<'de>, _, _>(opt(char('-')), digit1)(self.input).is_ok() {
+			self.deserialize_i64(visitor)
+		} else if double::<_, NomError<'de>>(self.input).is_ok() {
+			self.deserialize_f64(visitor)
+		} else {
+			self.deserialize_str(visitor)
+		}
 	}
 
 	#[inline]
@@ -815,8 +856,8 @@ impl<'s, 'b, 'de> de::Deserializer<'de> for &'s mut Deserializer<'b, 'de> {
 
 		let true_str = true.to_string();
 		let (tail, res) = alt((
-			tag_no_case(true_str.as_str()),
-			tag_no_case(false.to_string().as_str()),
+			tag_no_case(Deserializer::TRUE),
+			tag_no_case(Deserializer::FALSE),
 		))(self.input)
 		.map_err(|_err: NomErr<'de>| {
 			self.new_error(DeErrorKind::InvalidType("a boolean".to_string()))
@@ -1425,6 +1466,7 @@ impl<'r, 'b, 'de> SeqAccess<'de> for TupleAccess<'r, 'b, 'de> {
 }
 
 #[derive(Debug)]
+#[repr(transparent)]
 struct EnumAccess<'r, 'b, 'de> {
 	deserializer: &'r mut Deserializer<'b, 'de>,
 }

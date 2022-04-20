@@ -3,6 +3,15 @@
 version = 3
 
 [[package]]
+name = "either"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e78d4f1cc4ae33bbfc157ed5d5a5ef3bc29227303d595861deb238fcec4e9457"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "futures"
 version = "0.3.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -165,8 +174,9 @@ dependencies = [
 
 [[package]]
 name = "serdenom_csv"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
+ "either",
  "futures",
  "nom",
  "serde",

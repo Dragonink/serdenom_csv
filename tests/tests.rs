@@ -210,3 +210,42 @@ fn r#enum() {
 		}
 	);
 }
+
+#[test]
+fn either() {
+	use either::Either;
+
+	#[derive(Debug, PartialEq, Eq, Deserialize)]
+	struct S {
+		#[serde(with = "either::serde_untagged")]
+		either: Either<u8, bool>,
+		#[serde(with = "either::serde_untagged_optional")]
+		opt_either: Option<Either<char, String>>,
+	}
+	const DATASET: &str = include_str!("either.csv");
+
+	let data: Vec<S> = from_str(DATASET).unwrap();
+	assert_eq!(data.len(), 3);
+
+	assert_eq!(
+		data[0],
+		S {
+			either: Either::Left(42),
+			opt_either: Some(Either::Right("hello".to_string())),
+		}
+	);
+	assert_eq!(
+		data[1],
+		S {
+			either: Either::Right(true),
+			opt_either: Some(Either::Left('c')),
+		}
+	);
+	assert_eq!(
+		data[2],
+		S {
+			either: Either::Left(69),
+			opt_either: None,
+		}
+	);
+}

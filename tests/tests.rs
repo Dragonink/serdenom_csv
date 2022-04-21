@@ -51,7 +51,7 @@ fn primitives() {
 			boolean: false,
 			integer: -90,
 			float: 28.3797,
-			string: "Hello, world!",
+			string: "Hello,\nworld!",
 			default_boolean: Default::default(),
 			option_string: None,
 		}

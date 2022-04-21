@@ -22,7 +22,7 @@
 //! If you have a non-standard CSV file with a single structure or a list of values,
 //! you need [`from_str`] or [`DeserializerBuilder::deserialize`].
 //!
-//! With that said, you may still use the second method instead of the first one if you do not care nor want a fail-fast method:
+//! With that said, you may still use the second method instead of the first one if you do not care or want a fail-fast method:
 //! ```rust
 //! # use serdenom_csv::*;
 //! # #[derive(Debug, PartialEq, Eq, serde::Deserialize)] struct T { value: usize }
@@ -369,17 +369,17 @@ builder_param!(
 	DeserializerBuilder,
 	/// Define the diferent levels of nested structures in the CSV data
 	///
-	/// **Default value: `[Separators::default()]`**
+	/// **[Default](Self::default) value: `[Separators::default()]`**
 	separators: Vec<Separators>,
 	/// Character delimiting string
 	///
-	/// **Default value: `'"'`**
+	/// **[Default](Self::default) value: `'"'`**
 	string_delim: char,
 	/// If the first record of the CSV input is a header row
 	///
 	/// Without headers, the fields in the CSV need to be declared in the same order as in your Rust struct.
 	///
-	/// **Default value: `true`**
+	/// **[Default](Self::default) value: `true`**
 	has_headers: bool
 );
 impl Default for DeserializerBuilder {
@@ -393,30 +393,53 @@ impl Default for DeserializerBuilder {
 	}
 }
 impl DeserializerBuilder {
-	fn extract_headers<'s>(
-		&self,
-		input: &'s str,
-	) -> crate::Result<Option<(&'s str, Vec<&'s str>)>> {
-		use nom::{
-			bytes::complete::take_till1, character::complete::char, combinator::opt,
-			multi::separated_list1, sequence::terminated,
-		};
+	fn take_record<'i>(&self, input: &'i str) -> (&'i str, &'i str) {
+		let separator = self
+			.separators
+			.get(0)
+			.expect("separators must not be empty")
+			.record();
+		let mut string_delim_count: usize = 0;
+		let mut prev_char_is_escape = false;
+		let mut i: usize = 0;
+		for c in input.chars() {
+			if prev_char_is_escape {
+				prev_char_is_escape = false;
+			} else if c == '\\' {
+				prev_char_is_escape = true;
+			} else if c == self.string_delim {
+				string_delim_count += 1;
+			} else if c == separator && string_delim_count % 2 == 0 {
+				break;
+			}
+			i += 1;
+		}
+		(&input[((i + 1).min(input.len()))..], &input[..i])
+	}
 
+	fn extract_headers<'i>(
+		&self,
+		input: &'i str,
+	) -> crate::Result<Option<(&'i str, Vec<&'i str>)>> {
 		if self.has_headers {
-			let Separators(record_sep, field_sep) = self.separators[0];
-			let (tail, row) = terminated(take_till1(|c| c == record_sep), opt(char(record_sep)))(
-				input,
-			)
-			.map_err(|_err: NomErr<'s>| {
-				crate::Error::from(DeErrorKind::SyntaxError("header row must be defined"))
-			})?;
-			let (_, headers) = separated_list1(char(field_sep), take_till1(|c| c == field_sep))(
-				row,
-			)
-			.map_err(|_err: NomErr<'s>| {
-				crate::Error::from(DeErrorKind::SyntaxError("header row must not be empty"))
-			})?;
-			Ok(Some((tail, headers)))
+			let (tail, headers) = self.take_record(input);
+			let separator = self
+				.separators
+				.get(0)
+				.expect("separators must not be empty")
+				.field();
+			let headers: Vec<&str> = self
+				.clone()
+				.has_headers(false)
+				.separators([Separators(separator, '\0')])
+				.deserialize(headers)?;
+			if headers.is_empty() {
+				Err(crate::Error::from(DeErrorKind::SyntaxError(
+					"header row must not be empty",
+				)))
+			} else {
+				Ok(Some((tail, headers)))
+			}
 		} else {
 			Ok(None)
 		}
@@ -441,6 +464,7 @@ impl DeserializerBuilder {
 			Separators::are_unique(self.separators.iter()),
 			"separators must be unique"
 		);
+
 		let headers = self.extract_headers(input)?.map(|(tail, headers)| {
 			input = tail;
 			headers
@@ -471,26 +495,29 @@ impl DeserializerBuilder {
 		&self,
 		mut input: &'de str,
 	) -> crate::Result<Vec<crate::Result<T>>> {
-		use nom::{bytes::complete::take_till, character::complete::char, multi::separated_list0};
-
 		assert!(!self.separators.is_empty(), "separators must not be empty");
 		assert!(
 			Separators::are_unique(self.separators.iter()),
 			"separators must be unique"
 		);
+
 		let headers = self.extract_headers(input)?.map(|(tail, headers)| {
 			input = tail;
 			headers
 		});
-		let sep = self.separators[0].record();
-		let (_, records) = separated_list0::<_, _, _, NomError<'de>, _, _>(
-			char(sep),
-			take_till(move |c| c == sep),
-		)(input.trim())
-		.unwrap();
+		let mut records = Vec::new();
+		loop {
+			if input.is_empty() {
+				break;
+			}
+			let (tail, record) = self.take_record(input);
+			if !record.is_empty() {
+				records.push(record);
+			}
+			input = tail;
+		}
 		Ok(records
 			.into_iter()
-			.filter(|&record| !record.trim().is_empty())
 			.enumerate()
 			.map(|(i, input)| {
 				let mut deserializer = Deserializer::new(
@@ -507,7 +534,7 @@ impl DeserializerBuilder {
 
 	/// Deserialize each record of a CSV input independently in a stream
 	///
-	/// > 🛈 Requires feature *`stream`*
+	/// > **🛈 Requires feature *`stream`***
 	///
 	/// This function returns a [`Stream`](https://docs.rs/futures/latest/futures/stream/trait.Stream.html)`<Result<T>>` such that if the deserializations of some records fail,
 	/// the others will still be deserialized successfully.
@@ -553,34 +580,24 @@ impl DeserializerBuilder {
 			Separators::are_unique(self.separators.iter()),
 			"separators must be unique"
 		);
+
 		let headers = self.extract_headers(input)?.map(|(tail, headers)| {
 			input = tail;
 			headers
 		});
-		let sep = self.separators[0].record();
 		let mut i = 0;
 		Ok(futures::stream::poll_fn(move |_| {
 			use futures::task::Poll;
-			use nom::{
-				bytes::complete::take_till1,
-				character::complete::anychar,
-				combinator::{eof, opt},
-			};
 
-			macro_rules! take_sep {
-				($tail:expr) => {
-					opt::<_, _, NomError<'de>, _>(anychar)($tail).unwrap().0
-				};
-			}
 			loop {
-				if eof::<_, NomError<'de>>(input).is_ok() {
+				if input.is_empty() {
 					return Poll::Ready(None);
-				} else if let Ok((tail, res)) =
-					take_till1::<_, _, NomError<'de>>(|c| c == sep)(input)
-				{
-					input = take_sep!(tail);
+				}
+				let (tail, record) = self.take_record(input);
+				input = tail;
+				if !record.is_empty() {
 					let mut deserializer = Deserializer::new(
-						res,
+						record,
 						headers.as_deref(),
 						&self.separators,
 						self.string_delim,
@@ -588,8 +605,6 @@ impl DeserializerBuilder {
 					deserializer.curr_record = i;
 					i += 1;
 					return Poll::Ready(Some(T::deserialize(&mut deserializer)));
-				} else {
-					input = take_sep!(input);
 				}
 			}
 		}))
@@ -637,15 +652,22 @@ impl<'b, 'de> Deserializer<'b, 'de> {
 		self.curr_separator > 0
 	}
 
+	#[inline]
+	fn swap_headers(&mut self, fields: &mut Option<&'b [&'de str]>) {
+		std::mem::swap(&mut self.headers, fields)
+	}
+
 	#[inline(always)]
 	fn new_error(&self, kind: DeErrorKind) -> crate::Error {
+		use either::Either;
+
 		crate::Error::De {
 			kind,
 			record: Some(self.curr_record + 1),
 			field: self
 				.initial_headers
-				.map(|headers| format!("{:?}", headers[self.curr_field]))
-				.or_else(|| Some(format!("{:?}", self.curr_field + 1))),
+				.map(|headers| Either::Left(format!("{:?}", headers[self.curr_field])))
+				.or(Some(Either::Right(self.curr_field + 1))),
 		}
 	}
 
@@ -711,25 +733,25 @@ impl<'b, 'de> Deserializer<'b, 'de> {
 	}
 
 	#[inline]
-	fn take_end_of_record(&mut self) -> bool {
+	fn take_end_of_record(&mut self) -> crate::Result<()> {
 		use nom::character::complete::char;
 
 		char::<_, NomError<'de>>(self.curr_separator().record())(self.input)
 			.map(|(tail, _)| {
 				self.input = tail;
 			})
-			.is_ok()
+			.map_err(|_err| self.new_error(DeErrorKind::SyntaxError("record separator")))
 	}
 
 	#[inline]
-	fn take_end_of_field(&mut self) -> bool {
+	fn take_end_of_field(&mut self) -> crate::Result<()> {
 		use nom::character::complete::char;
 
 		char::<_, NomError<'de>>(self.curr_separator().field())(self.input)
 			.map(|(tail, _)| {
 				self.input = tail;
 			})
-			.is_ok()
+			.map_err(|_err| self.new_error(DeErrorKind::SyntaxError("field separator")))
 	}
 
 	fn nom_empty_record(&mut self) -> bool {
@@ -1080,20 +1102,19 @@ impl<'s, 'b, 'de> de::Deserializer<'de> for &'s mut Deserializer<'b, 'de> {
 			escaped(
 				take_till(move |c| c == string_delim),
 				'\\',
-				one_of(format!("{}n\\", string_delim).as_str()),
+				one_of(format!("{}\\", string_delim).as_str()),
 			),
 			char(string_delim),
 		)(self.input)
+		.or_else(|_err: NomErr<'de>| {
+			Ok(
+				take_till::<_, _, NomError<'de>>(|c: char| self.is_end_of_field(c))(self.input)
+					.unwrap(),
+			)
+		})
 		.map(|(tail, res)| {
 			self.input = tail;
 			res
-		})
-		.or_else(|_err: NomErr<'de>| {
-			let (tail, res) =
-				take_till::<_, _, NomError<'de>>(|c: char| self.is_end_of_field(c))(self.input)
-					.unwrap();
-			self.input = tail;
-			Ok(res)
 		})
 		.and_then(|val| visitor.visit_borrowed_str(val))
 	}
@@ -1165,14 +1186,9 @@ impl<'s, 'b, 'de> de::Deserializer<'de> for &'s mut Deserializer<'b, 'de> {
 	{
 		if self.is_inner() || self.headers.is_none() {
 			let mut fields = Some(fields);
-			macro_rules! swap_headers {
-				() => {
-					std::mem::swap(&mut self.headers, &mut fields);
-				};
-			}
-			swap_headers!();
+			self.swap_headers(&mut fields);
 			let res = self.deserialize_map(visitor);
-			swap_headers!();
+			self.swap_headers(&mut fields);
 			res
 		} else {
 			self.deserialize_map(visitor)
@@ -1336,14 +1352,6 @@ macro_rules! next_key {
 		}
 	};
 }
-macro_rules! take_end_of_field {
-	($deserializer:expr) => {
-		let deserializer: &mut $crate::de::Deserializer = $deserializer;
-		if !deserializer.take_end_of_field() {
-			return Err(deserializer.new_error(DeErrorKind::SyntaxError("field separator")));
-		}
-	};
-}
 
 #[derive(Debug)]
 struct StructAccess<'r, 'b, 'de> {
@@ -1372,10 +1380,8 @@ impl<'r, 'b, 'de> SeqAccess<'de> for StructAccess<'r, 'b, 'de> {
 			if self.deserializer.peek_end_of_seq() {
 				return Ok(None);
 			}
-			if (self.counter > 0 || empty_counter > 0) && !self.deserializer.take_end_of_record() {
-				return Err(self
-					.deserializer
-					.new_error(DeErrorKind::SyntaxError("record separator")));
+			if self.counter > 0 || empty_counter > 0 {
+				self.deserializer.take_end_of_record()?;
 			}
 			empty_record = self.deserializer.nom_empty_record();
 			empty_counter += 1;
@@ -1416,7 +1422,7 @@ impl<'r, 'b, 'de> MapAccess<'de> for StructAccess<'r, 'b, 'de> {
 		S: DeserializeSeed<'de>,
 	{
 		if self.counter > 0 {
-			take_end_of_field!(self.deserializer);
+			self.deserializer.take_end_of_field()?;
 		}
 		self.deserializer.curr_separator += 1;
 		let res = seed.deserialize(&mut *self.deserializer);
@@ -1500,7 +1506,7 @@ impl<'r, 'b, 'de> VariantAccess<'de> for EnumAccess<'r, 'b, 'de> {
 	where
 		S: DeserializeSeed<'de>,
 	{
-		take_end_of_field!(self.deserializer);
+		self.deserializer.take_end_of_field()?;
 		seed.deserialize(self.deserializer)
 	}
 
@@ -1510,7 +1516,7 @@ impl<'r, 'b, 'de> VariantAccess<'de> for EnumAccess<'r, 'b, 'de> {
 	{
 		use serde::de::Deserializer;
 
-		take_end_of_field!(self.deserializer);
+		self.deserializer.take_end_of_field()?;
 		self.deserializer.deserialize_tuple(len, visitor)
 	}
 
@@ -1524,7 +1530,7 @@ impl<'r, 'b, 'de> VariantAccess<'de> for EnumAccess<'r, 'b, 'de> {
 	{
 		use serde::de::Deserializer;
 
-		take_end_of_field!(self.deserializer);
+		self.deserializer.take_end_of_field()?;
 		self.deserializer
 			.deserialize_struct(Default::default(), fields, visitor)
 	}

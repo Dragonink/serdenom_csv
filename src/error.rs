@@ -1,5 +1,6 @@
 //! When processing CSV goes wrong
 
+use either::Either;
 use serde::de::{Expected, Unexpected};
 use std::fmt::{self, Display, Formatter};
 
@@ -54,7 +55,7 @@ pub enum Error {
 		/// Record where the error occurred
 		record: Option<usize>,
 		/// Field where the error occured
-		field: Option<String>,
+		field: Option<Either<String, usize>>,
 	},
 }
 impl From<DeErrorKind> for Error {

@@ -220,7 +220,7 @@ fn either() {
 		#[serde(with = "either::serde_untagged")]
 		either: Either<u8, bool>,
 		#[serde(with = "either::serde_untagged_optional")]
-		opt_either: Option<Either<char, String>>,
+		opt_either: Option<Either<u8, String>>,
 	}
 	const DATASET: &str = include_str!("either.csv");
 
@@ -231,14 +231,14 @@ fn either() {
 		data[0],
 		S {
 			either: Either::Left(42),
-			opt_either: Some(Either::Right("hello".to_string())),
+			opt_either: Some(Either::Left(2)),
 		}
 	);
 	assert_eq!(
 		data[1],
 		S {
 			either: Either::Right(true),
-			opt_either: Some(Either::Left('c')),
+			opt_either: Some(Either::Right("2i".to_string())),
 		}
 	);
 	assert_eq!(

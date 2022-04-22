@@ -823,28 +823,32 @@ impl<'s, 'b, 'de> de::Deserializer<'de> for &'s mut Deserializer<'b, 'de> {
 			sequence::pair,
 		};
 
+		macro_rules! verify_eof {
+			($parser:expr) => {
+				pair::<_, _, _, NomError<'de>, _, _>(
+					$parser,
+					verify(anychar, |&c| self.is_end_of_field(c)),
+				)
+			};
+		}
+
 		if self.peek_end_of_field() {
 			visitor.visit_unit()
-		} else if pair::<_, _, _, NomError<'de>, _, _>(
-			anychar,
-			verify(anychar, |c| self.is_end_of_field(*c)),
-		)(self.input)
-		.is_ok()
-		{
-			self.deserialize_char(visitor)
-		} else if alt::<_, _, NomError<'de>, _>((
+		} else if verify_eof!(alt((
 			tag_no_case(Deserializer::TRUE),
 			tag_no_case(Deserializer::FALSE),
-		))(self.input)
+		)))(self.input)
 		.is_ok()
 		{
 			self.deserialize_bool(visitor)
-		} else if digit1::<_, NomError<'de>>(self.input).is_ok() {
+		} else if verify_eof!(digit1)(self.input).is_ok() {
 			self.deserialize_u64(visitor)
-		} else if pair::<_, _, _, NomError<'de>, _, _>(opt(char('-')), digit1)(self.input).is_ok() {
+		} else if verify_eof!(pair(opt(char('-')), digit1))(self.input).is_ok() {
 			self.deserialize_i64(visitor)
-		} else if double::<_, NomError<'de>>(self.input).is_ok() {
+		} else if verify_eof!(double)(self.input).is_ok() {
 			self.deserialize_f64(visitor)
+		} else if verify_eof!(anychar)(self.input).is_ok() {
+			self.deserialize_char(visitor)
 		} else {
 			self.deserialize_str(visitor)
 		}
@@ -1255,12 +1259,18 @@ impl<'s, 'b, 'de> de::Deserializer<'de> for &'s mut Deserializer<'b, 'de> {
 }
 
 #[derive(Debug)]
-struct HeaderDeserializer<'r, 'b, 'de, H> {
+struct HeaderDeserializer<'r, 'b, 'de, H>
+where
+	H: Debug,
+{
 	deserializer: &'r mut Deserializer<'b, 'de>,
 	headers: &'b [H],
 	index: usize,
 }
-impl<'r, 'b, 'de, H> HeaderDeserializer<'r, 'b, 'de, H> {
+impl<'r, 'b, 'de, H> HeaderDeserializer<'r, 'b, 'de, H>
+where
+	H: Debug,
+{
 	#[inline]
 	fn get_header(&self) -> crate::Result<&H> {
 		self.headers.get(self.index).ok_or_else(|| {
